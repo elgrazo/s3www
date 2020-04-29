@@ -54,5 +54,5 @@ dockers:
     goarch: amd64
     dockerfile: Dockerfile.release
     image_templates:
-      - "y4m4/s3www:{{ .Tag }}"
-      - "y4m4/s3www:latest"
+      - "elgrazo/s3www:{{ .Tag }}"
+      - "elgrazo/s3www:latest"

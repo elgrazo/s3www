@@ -1,16 +1,15 @@
 package main
 
 import (
-	"flag"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
-	"github.com/caddyserver/certmagic"
 	minio "github.com/minio/minio-go/v6"
 	"github.com/minio/minio-go/v6/pkg/credentials"
 	"github.com/minio/minio-go/v6/pkg/s3utils"
@@ -42,7 +41,19 @@ func (s3 *S3) Open(name string) (http.File, error) {
 	name = strings.TrimPrefix(name, pathSeparator)
 	obj, err := getObject(s3, name)
 	if err != nil {
-		return nil, os.ErrNotExist
+		if notfound == "" {
+			return nil, os.ErrNotExist
+		} else {
+			obj, err = getObject(s3, notfound)
+			return &httpMinioObject{
+				client: s3.Client,
+				object: obj,
+				isDir:  false,
+				bucket: bucket,
+				prefix: name,
+			}, os.ErrNotExist
+		}
+
 	}
 
 	return &httpMinioObject{
@@ -68,25 +79,30 @@ func getObject(s3 *S3, name string) (*minio.Object, error) {
 }
 
 var (
-	endpoint    string
-	accessKey   string
-	secretKey   string
-	address     string
-	bucket      string
-	tlsCert     string
-	tlsKey      string
-	letsEncrypt bool
+	endpoint  string
+	accessKey string
+	secretKey string
+	address   string
+	bucket    string
+	notfound  string
 )
 
 func init() {
-	flag.StringVar(&endpoint, "endpoint", "", "S3 server endpoint")
-	flag.StringVar(&accessKey, "accessKey", "", "Access key of S3 storage")
-	flag.StringVar(&secretKey, "secretKey", "", "Secret key of S3 storage")
-	flag.StringVar(&bucket, "bucket", "", "Bucket name which hosts static files")
-	flag.StringVar(&address, "address", "127.0.0.1:8080", "Bind to a specific ADDRESS:PORT, ADDRESS can be an IP or hostname")
-	flag.StringVar(&tlsCert, "ssl-cert", "", "TLS certificate for this server")
-	flag.StringVar(&tlsKey, "ssl-key", "", "TLS private key for this server")
-	flag.BoolVar(&letsEncrypt, "lets-encrypt", false, "Enable Let's Encrypt")
+
+	endpoint = getEnv("ENDPOINT", "")
+	accessKey = getEnv("ACCESSKEY", "")
+	secretKey = getEnv("SECRETKEY", "")
+	bucket = getEnv("BUCKET", "")
+	address = getEnv("ADDRESS", "127.0.0.1:8080")
+	notfound = getEnv("404PAGE", "")
+}
+
+func getEnv(key, dflt string) string {
+	val, exists := os.LookupEnv(key)
+	if !exists {
+		val = dflt
+	}
+	return val
 }
 
 // NewCustomHTTPTransport returns a new http configuration
@@ -109,11 +125,29 @@ func NewCustomHTTPTransport() *http.Transport {
 	}
 }
 
+func FileServerWithCustom404(fs http.FileSystem) http.Handler {
+	fsh := http.FileServer(fs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := fs.Open(path.Clean(r.URL.Path))
+		if os.IsNotExist(err) {
+			if notfound != "" {
+				w.WriteHeader(http.StatusNotFound)
+				r.URL.Path = path.Clean(notfound)
+				fsh.ServeHTTP(w, r)
+			} else {
+				http.NotFound(w, r)
+			}
+
+			return
+		}
+		fsh.ServeHTTP(w, r)
+	})
+}
+
 func main() {
-	flag.Parse()
 
 	if strings.TrimSpace(bucket) == "" {
-		log.Fatalln(`Bucket name cannot be empty, please provide 's3www -bucket "mybucket"'`)
+		log.Fatalln(`Bucket name cannot be empty, please provide BUCKET environmental variable`)
 	}
 
 	u, err := url.Parse(endpoint)
@@ -162,15 +196,8 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	mux := http.FileServer(&S3{client, bucket})
-	if letsEncrypt {
-		log.Printf("Started listening on https://%s\n", address)
-		certmagic.HTTPS([]string{address}, mux)
-	} else if tlsCert != "" && tlsKey != "" {
-		log.Printf("Started listening on https://%s\n", address)
-		log.Fatalln(http.ListenAndServeTLS(address, tlsCert, tlsKey, mux))
-	} else {
-		log.Printf("Started listening on http://%s\n", address)
-		log.Fatalln(http.ListenAndServe(address, mux))
-	}
+	//mux := http.FileServer(&S3{client, bucket})
+	mux := FileServerWithCustom404(&S3{client, bucket})
+	log.Printf("Started listening on http://%s\n", address)
+	log.Fatalln(http.ListenAndServe(address, mux))
 }
