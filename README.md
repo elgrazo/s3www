@@ -32,6 +32,11 @@ go get github.com/elgrazo/s3www
 ```
 
 
+## Known Bugs
+Following warning might show up in the logs:
+```
+http: superfluous response.WriteHeader call from main.FileServerWithCustom404.func1 (main.go:136)
+```
 
 
 ## License
