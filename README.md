@@ -8,9 +8,9 @@ Fork from [harshavardhana/s3www](https://github.com/harshavardhana/s3www) versio
 - Custom 404 page can be loaded from bucket
 
 ## Run on Docker
-Pull from Dockerhub:
+Get from Dockerhub:
 ```
-
+docker pull elgrazo/s3www
 ```
 
 Set the environment variables:
